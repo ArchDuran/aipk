@@ -1,0 +1,7 @@
+target/
+*.log
+.DS_Store
+.wrangler/
+*.cdx.json
+
+.claude/

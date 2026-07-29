@@ -1,0 +1,23 @@
+{"q": "Who founded Meridian Robotics and when?", "type": "in"}
+{"q": "What is the payload capacity of the Frostline F4?", "type": "in"}
+{"q": "How long does a full charge of the F4 take?", "type": "in"}
+{"q": "What is the minimum charge level for the F4 to start a mission?", "type": "in"}
+{"q": "Which path planning system does the Frostline F4 use?", "type": "in"}
+{"q": "What is the emergency stop distance of the F4 at full loaded speed?", "type": "in"}
+{"q": "What is the standard warranty period for Meridian robots and for battery packs?", "type": "in"}
+{"q": "When must an on-call engineer acknowledge an incident?", "type": "in"}
+{"q": "What happens during a SEV-1 incident?", "type": "in"}
+{"q": "How long is incident telemetry retained?", "type": "in"}
+{"q": "What is the operating temperature range of the Frostline F4?", "type": "in"}
+{"q": "Who is the VP of Engineering at Meridian Robotics?", "type": "in"}
+{"q": "When was the Icebreaker IB-2 released?", "type": "in"}
+{"q": "How often do robots send telemetry during missions?", "type": "in"}
+{"q": "Which certification body assessed the Frostline F4?", "type": "in"}
+{"q": "What is the price of a Frostline F4 robot?", "type": "out"}
+{"q": "How many Frostline F4 units were sold in 2025?", "type": "out"}
+{"q": "What is Meridian Robotics' annual revenue?", "type": "out"}
+{"q": "Does the Frostline F4 support outdoor operation in rain?", "type": "out"}
+{"q": "Who are Meridian Robotics' main competitors?", "type": "out"}
+{"q": "What CPU does the Frostline F4 use?", "type": "out"}
+{"q": "When will the Frostline F5 be released?", "type": "out"}
+{"q": "How many robots does a typical Meridian customer operate?", "type": "out"}

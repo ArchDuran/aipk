@@ -1,0 +1,28 @@
+[package]
+name        = "rust_developer"
+version     = "1.0.0"
+author      = "AIPK Example"
+description = "Senior Rust developer agent with skills, MCP tools, and deep Rust knowledge"
+license     = "MIT"
+
+[model]
+compatible      = []
+min_context     = 8192
+embedding_model = ""
+embedding_dim   = 0
+
+[runtime]
+mcp_autostart = true
+rag_top_k     = 5
+rag_min_score = 0.6
+
+[graph]
+role      = "specialist"
+depth     = 1
+max_nodes = 3
+
+[consolidation]
+strategy  = "idle"
+idle_min  = 60
+keep_top  = 0.8
+hebbian   = true

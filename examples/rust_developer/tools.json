@@ -1,0 +1,17 @@
+{
+  "mcp_servers": [
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp", "/home"],
+      "env": {}
+    },
+    {
+      "name": "fetch",
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "env": {}
+    }
+  ],
+  "tools": []
+}

@@ -1,0 +1,7 @@
+{
+  "chunk_count": 34,
+  "claim_count": 62,
+  "claim_dim": 768,
+  "embedding_dim": 768,
+  "embedding_model": "nomic-embed-text"
+}

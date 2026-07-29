@@ -1,0 +1,17 @@
+[package]
+name        = "python-expert"
+version     = "1.0.0"
+author      = "aipk-examples"
+description = "Python разработчик — идиоматический Python, лучшие практики, type hints, тестирование"
+license     = "MIT"
+
+[model]
+compatible      = ["llama3", "qwen2.5", "mistral", "gemma3", "deepseek"]
+min_context     = 4096
+embedding_model = "all-MiniLM-L6-v2"
+embedding_dim   = 384
+
+[runtime]
+mcp_autostart = false
+rag_top_k     = 5
+rag_min_score = 0.55

@@ -1,0 +1,11 @@
+# License and copyright terms for this package and its dataset.
+# Packed as the LICN section — always readable, even in sealed packages.
+
+[license]
+author    = ""
+license   = "proprietary"   # or an SPDX id: MIT, CC-BY-4.0, ...
+copyright = ""
+terms     = ""              # human-readable usage terms
+contact   = ""
+allow_derivatives    = false
+allow_redistribution = false

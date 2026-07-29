@@ -1,0 +1,28 @@
+[package]
+name        = "meridian"
+version     = "0.1.0"
+author      = ""
+description = ""
+license     = "MIT"
+
+[model]
+compatible      = []
+min_context     = 4096
+embedding_model = "nomic-embed-text"
+embedding_dim   = 768
+
+[runtime]
+mcp_autostart = false
+rag_top_k     = 5
+rag_min_score = 0.7
+
+[graph]
+role      = "specialist"
+depth     = 2
+max_nodes = 5
+
+[consolidation]
+strategy = "idle"
+idle_min = 30
+keep_top = 0.7
+hebbian  = true
