@@ -40,6 +40,68 @@ fn save_claims(dir: &Path, claims: &[Value]) -> Result<()> {
     Ok(())
 }
 
+/// Maps a claim's `source` (the human-readable title written by extract-claims,
+/// e.g. "frostline-f4-spec.md") to the on-disk path of that source file, via
+/// sources.jsonl. Missing/malformed entries are skipped rather than failing
+/// the whole load — a lookup miss just means that claim's span can't be
+/// checked, not that promotion should hard-error.
+fn load_source_titles_to_paths(
+    dir: &Path,
+) -> std::collections::HashMap<String, std::path::PathBuf> {
+    let path = dir.join("sources.jsonl");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return std::collections::HashMap::new();
+    };
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter_map(|v| {
+            let title = v["title"].as_str()?.to_string();
+            let path = v["path"].as_str()?.to_string();
+            Some((title, std::path::PathBuf::from(path)))
+        })
+        .collect()
+}
+
+/// Lowercases, collapses whitespace, drops markdown emphasis markers, and
+/// folds common Unicode punctuation variants (curly quotes, en/em dash,
+/// minus sign) to their ASCII equivalents, so a span that's byte-for-byte
+/// identical in meaning but typographically reformatted still matches its
+/// source — e.g. a source line `1. **Frostline** — pallet-moving robots...`
+/// against an extracted span `Frostline — pallet-moving robots...` (list
+/// numbering and bold markers stripped, otherwise a verbatim quote).
+fn normalize_for_match(s: &str) -> String {
+    let folded: String = s
+        .chars()
+        .filter(|c| *c != '*' && *c != '_')
+        .map(|c| match c {
+            '\u{2018}' | '\u{2019}' => '\'',
+            '\u{201C}' | '\u{201D}' => '"',
+            '\u{2013}' | '\u{2014}' | '\u{2212}' => '-',
+            other => other,
+        })
+        .collect();
+    folded
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// True if `span` is (near-)verbatim present in `source_text` — the contract
+/// verbatim-mode extraction is supposed to honor. Catches both wholesale
+/// fabrication (a claim with no basis in the document at all) and quieter
+/// corruption (a real sentence with one value silently changed, e.g. "-25 °C"
+/// rewritten as "-5 °C" — the mutated span is no longer a substring of the
+/// source even though most of the sentence still reads plausibly).
+fn span_is_grounded(span: &str, source_text: &str) -> bool {
+    let span_norm = normalize_for_match(span);
+    if span_norm.is_empty() {
+        return false;
+    }
+    normalize_for_match(source_text).contains(&span_norm)
+}
+
 // ─── list ────────────────────────────────────────────────────────────────────
 
 pub fn list(dir: &Path, status_filter: Option<&str>, output_json: bool) -> Result<()> {
@@ -257,6 +319,9 @@ pub fn stats(dir: &Path) -> Result<()> {
 
 pub fn promote_all(dir: &Path, from_status: &str, reviewer: Option<&str>) -> Result<()> {
     let mut claims = load_claims(dir)?;
+    let source_paths = load_source_titles_to_paths(dir);
+    let mut source_cache: std::collections::HashMap<std::path::PathBuf, String> =
+        std::collections::HashMap::new();
 
     let ids: Vec<String> = claims
         .iter()
@@ -271,11 +336,34 @@ pub fn promote_all(dir: &Path, from_status: &str, reviewer: Option<&str>) -> Res
 
     let at = now_rfc3339();
     let mut promoted = 0usize;
+    let mut held_back: Vec<String> = Vec::new();
 
     for claim in claims.iter_mut() {
         let id = claim["id"].as_str().unwrap_or("").to_string();
         if !ids.contains(&id) {
             continue;
+        }
+
+        // Digest-mode claims are deliberate paraphrases, not verbatim quotes —
+        // there's no source substring to check them against. Verbatim-mode
+        // (and legacy claims with no "mode" field) get the span-grounding
+        // check: --auto-promote exists to skip human review, so this is the
+        // one automated backstop against extraction hallucinating a claim
+        // with no basis in the document at all.
+        let is_verbatim = claim["mode"].as_str().unwrap_or("verbatim") == "verbatim";
+        if is_verbatim {
+            let span = claim["span"].as_str().unwrap_or("");
+            let source_title = claim["source"].as_str().unwrap_or("");
+            let grounded = source_paths.get(source_title).is_some_and(|path| {
+                let text = source_cache
+                    .entry(path.clone())
+                    .or_insert_with(|| fs::read_to_string(path).unwrap_or_default());
+                span_is_grounded(span, text)
+            });
+            if !grounded {
+                held_back.push(id);
+                continue;
+            }
         }
 
         claim["status"] = json!("canonical");
@@ -301,6 +389,17 @@ pub fn promote_all(dir: &Path, from_status: &str, reviewer: Option<&str>) -> Res
         "✓ Promoted {} claims: {} → canonical",
         promoted, from_status
     );
+    if !held_back.is_empty() {
+        println!(
+            "⚠ Held back {} claim(s) whose span doesn't appear in its source document \
+             (still '{}' — needs human review via 'aipk claims promote <id>' or 'aipk claims reject <id>'):",
+            held_back.len(),
+            from_status
+        );
+        for id in &held_back {
+            println!("    {id}");
+        }
+    }
     Ok(())
 }
 
@@ -512,4 +611,135 @@ Statement 1: {a}\nStatement 2: {b}"
         println!("Review conflicting claims with `aipk claims list` and use `aipk claims reject` to deprecate incorrect ones.");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("aipk_claims_test_{name}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Regression for the exact failure mode from review: extraction hands
+    /// back a claim with no basis in the source document at all (a pallet
+    /// robot spec turned into "a missile system"), and --auto-promote used
+    /// to wave it straight through to canonical with no check whatsoever.
+    #[test]
+    fn promote_all_holds_back_a_claim_whose_span_is_not_in_the_source() {
+        let dir = scratch_dir("holds_back");
+        fs::write(
+            dir.join("doc.md"),
+            "Operating temperature: -30 C to +45 C.\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("sources.jsonl"),
+            format!(
+                "{}\n",
+                json!({
+                    "id": "s_doc",
+                    "title": "doc.md",
+                    "path": dir.join("doc.md").display().to_string(),
+                })
+            ),
+        )
+        .unwrap();
+        let entries = [
+            json!({
+                "id": "doc_0000", "text": "Operating temperature: -30 C to +45 C.",
+                "source": "doc.md", "span": "Operating temperature: -30 C to +45 C.",
+                "mode": "verbatim", "status": "extracted", "confidence": 1.0, "audit": []
+            }),
+            json!({
+                "id": "doc_0001", "text": "This robot is a missile system.",
+                "source": "doc.md", "span": "This robot is a missile system.",
+                "mode": "verbatim", "status": "extracted", "confidence": 1.0, "audit": []
+            }),
+        ]
+        .iter()
+        .map(|v| serde_json::to_string(v).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+        fs::write(dir.join("claims.jsonl"), entries + "\n").unwrap();
+
+        promote_all(&dir, "extracted", None).unwrap();
+
+        let claims = load_claims(&dir).unwrap();
+        let real = claims.iter().find(|c| c["id"] == "doc_0000").unwrap();
+        let fabricated = claims.iter().find(|c| c["id"] == "doc_0001").unwrap();
+        assert_eq!(real["status"], "canonical");
+        assert_eq!(fabricated["status"], "extracted");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn promote_all_skips_the_span_check_for_digest_mode() {
+        // Digest mode is a deliberate paraphrase, not a verbatim quote — there's
+        // no substring to check it against, so it must still promote normally.
+        let dir = scratch_dir("digest_skips_check");
+        fs::write(dir.join("doc.md"), "Some unrelated source text.\n").unwrap();
+        fs::write(
+            dir.join("sources.jsonl"),
+            format!(
+                "{}\n",
+                json!({
+                    "id": "s_doc",
+                    "title": "doc.md",
+                    "path": dir.join("doc.md").display().to_string(),
+                })
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("claims.jsonl"),
+            format!(
+                "{}\n",
+                json!({
+                    "id": "doc_0000", "text": "A paraphrased summary of the source.",
+                    "source": "doc.md", "span": "A paraphrased summary of the source.",
+                    "mode": "digest", "status": "extracted", "confidence": 1.0, "audit": []
+                })
+            ),
+        )
+        .unwrap();
+
+        promote_all(&dir, "extracted", None).unwrap();
+
+        let claims = load_claims(&dir).unwrap();
+        assert_eq!(claims[0]["status"], "canonical");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn span_is_grounded_ignores_punctuation_style() {
+        assert!(span_is_grounded(
+            "the F4 supports \u{2018}outdoor\u{2019} use",
+            "The F4 supports 'outdoor' use in most climates."
+        ));
+        assert!(!span_is_grounded(
+            "the price is $9,000",
+            "The device has no listed price."
+        ));
+    }
+
+    /// Regression: a real benchmark run held back a genuinely-sourced claim
+    /// because the source line used markdown list numbering and bold
+    /// ("1. **Frostline** — pallet-moving robots...") while the extracted
+    /// span dropped both ("Frostline — pallet-moving robots..."), and a
+    /// literal substring check doesn't see past a bold marker in the middle
+    /// of the doc's text.
+    #[test]
+    fn span_is_grounded_ignores_markdown_emphasis_and_list_numbering() {
+        assert!(span_is_grounded(
+            "Frostline — pallet-moving robots for freezer warehouses rated to -30 C.",
+            "1. **Frostline** — pallet-moving robots for freezer warehouses rated to -30 C.\n"
+        ));
+    }
 }

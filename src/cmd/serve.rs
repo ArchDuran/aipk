@@ -1088,10 +1088,8 @@ mod tests {
             claims: vec![],
             vectors: vec![],
         };
-        let unsupported = collect_unsupported_sentences(
-            "The CLMS section stores claims. [c1]",
-            &claims,
-        );
+        let unsupported =
+            collect_unsupported_sentences("The CLMS section stores claims. [c1]", &claims);
         assert_eq!(unsupported, vec!["The CLMS section stores claims. [c1]"]);
     }
 
