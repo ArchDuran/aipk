@@ -901,7 +901,7 @@ async fn llm_render_loop_json(
         .cloned()
         .collect();
 
-    let unsupported_sentences = collect_uncited_sentences(&response_text);
+    let unsupported_sentences = collect_unsupported_sentences(&response_text, &s.claims);
     let total_sentences = count_sentences(&response_text).max(1);
     let supported = total_sentences.saturating_sub(unsupported_sentences.len());
     let coverage = supported as f32 / total_sentences as f32;
@@ -968,11 +968,41 @@ pub(crate) fn apply_enforce(
     out
 }
 
-pub(crate) fn collect_uncited_sentences(text: &str) -> Vec<String> {
+/// Sentences that aren't actually grounded: either no `[claim_id]` at all, or
+/// one that doesn't survive `claim_grounds_sentence` against its cited claim
+/// (wrong claim entirely, or a claim whose numbers don't match — see
+/// `runtime::claim_grounds_sentence`). A citation-existence check alone lets
+/// a valid, canonical, but unrelated or number-mismatched claim ID "ground"
+/// any sentence it's pasted onto; this checks the citation actually applies.
+pub(crate) fn collect_unsupported_sentences(
+    text: &str,
+    claims: &crate::runtime::ClaimsRuntime,
+) -> Vec<String> {
     sentence_units(text)
         .into_iter()
-        .filter(|s| !s.contains('['))
+        .filter(|s| {
+            let ids = crate::runtime::ClaimsRuntime::extract_cited_ids(s);
+            if ids.is_empty() {
+                return true;
+            }
+            let content = strip_citation(s);
+            !ids.iter().any(|id| {
+                claims
+                    .get_canonical(id)
+                    .is_some_and(|c| crate::runtime::claim_grounds_sentence(content, &c.text, 0.2))
+            })
+        })
         .collect()
+}
+
+/// Drops a trailing `[claim_id]` (or `[id1][id2]`) citation, if present, so
+/// the remaining prose — not the bracket's own text — is what gets compared
+/// against the claim it cites.
+fn strip_citation(sentence: &str) -> &str {
+    match sentence.rfind('[') {
+        Some(idx) => sentence[..idx].trim_end(),
+        None => sentence,
+    }
 }
 
 fn sentence_units(text: &str) -> Vec<String> {
@@ -1030,18 +1060,69 @@ mod tests {
             units,
             vec!["The package header is 96 bytes long. [aipk_e2e_doc_0003]"]
         );
-        assert!(collect_uncited_sentences(
-            "The package header is 96 bytes long. [aipk_e2e_doc_0003]"
-        )
-        .is_empty());
     }
 
     #[test]
-    fn collect_uncited_sentences_keeps_truly_uncited_sentences() {
-        let uncited = collect_uncited_sentences(
+    fn collect_unsupported_sentences_keeps_truly_uncited_sentences() {
+        use crate::runtime::{Claim, ClaimStatus};
+        let claims = ClaimsRuntime {
+            claims: vec![Claim {
+                id: "c1".to_string(),
+                text: "The CLMS section stores claims.".to_string(),
+                source: "spec.md".to_string(),
+                span: "The CLMS section stores claims.".to_string(),
+                status: ClaimStatus::Canonical,
+            }],
+            vectors: vec![],
+        };
+        let unsupported = collect_unsupported_sentences(
             "The package header is 96 bytes long. The CLMS section stores claims. [c1]",
+            &claims,
         );
-        assert_eq!(uncited, vec!["The package header is 96 bytes long."]);
+        assert_eq!(unsupported, vec!["The package header is 96 bytes long."]);
+    }
+
+    #[test]
+    fn collect_unsupported_sentences_flags_citation_to_a_nonexistent_claim() {
+        let claims = ClaimsRuntime {
+            claims: vec![],
+            vectors: vec![],
+        };
+        let unsupported = collect_unsupported_sentences(
+            "The CLMS section stores claims. [c1]",
+            &claims,
+        );
+        assert_eq!(unsupported, vec!["The CLMS section stores claims. [c1]"]);
+    }
+
+    /// Regression: strict-render used to only check that a cited [claim_id]
+    /// existed and was canonical — not that it actually supported the
+    /// sentence it was pasted onto. A valid citation to an unrelated claim
+    /// (or one with a different number) used to count as "fully grounded".
+    #[test]
+    fn collect_unsupported_sentences_catches_a_valid_but_wrong_citation() {
+        use crate::runtime::{Claim, ClaimStatus};
+        let claims = ClaimsRuntime {
+            claims: vec![Claim {
+                id: "spec_0006".to_string(),
+                text: "Operating temperature: -30 °C to +45 °C.".to_string(),
+                source: "spec.md".to_string(),
+                span: "Operating temperature: -30 °C to +45 °C.".to_string(),
+                status: ClaimStatus::Canonical,
+            }],
+            vectors: vec![],
+        };
+        let unsupported = collect_unsupported_sentences(
+            "The operating temperature of the Frostline F4 is +500 °C. [spec_0006]",
+            &claims,
+        );
+        assert_eq!(unsupported.len(), 1);
+
+        let supported = collect_unsupported_sentences(
+            "The operating temperature of the Frostline F4 is +45 °C. [spec_0006]",
+            &claims,
+        );
+        assert!(supported.is_empty());
     }
 
     #[test]

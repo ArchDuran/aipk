@@ -227,7 +227,7 @@ pub async fn run(
         // answer with zero citations would trivially pass it. Coverage must
         // also confirm every factual sentence carries one (see `aipk verify`
         // for the full auditable report).
-        let uncited = crate::cmd::serve::collect_uncited_sentences(content);
+        let uncited = crate::cmd::serve::collect_unsupported_sentences(content, &claims);
         let total = crate::cmd::serve::count_sentences(content).max(1);
         let coverage = (total - uncited.len().min(total)) as f32 / total as f32;
         let fully_grounded = invalid.is_empty() && uncited.is_empty();

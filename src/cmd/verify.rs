@@ -271,6 +271,47 @@ mod tests {
         }
     }
 
+    /// Regression for the exact exploit found in review: a sentence with a
+    /// fabricated number ("+500 °C") used to score `grounded`/coverage=1.0
+    /// against a claim stating "-30 °C to +45 °C", because word overlap on
+    /// the surrounding words ("operating", "temperature", "Frostline")
+    /// outweighed the wrong number entirely.
+    #[test]
+    fn false_number_is_not_grounded_by_a_claim_with_different_numbers() {
+        let claims = ClaimsRuntime {
+            claims: vec![claim(
+                "spec_0006",
+                "Operating temperature: -30 °C to +45 °C.",
+                ClaimStatus::Canonical,
+            )],
+            vectors: vec![],
+        };
+        let results = score_sentences(
+            &claims,
+            &["The operating temperature of the Frostline F4 is +500 °C.".to_string()],
+            true,
+        );
+        assert_eq!(results[0].verdict, "unsupported");
+    }
+
+    #[test]
+    fn matching_number_still_grounds_normally() {
+        let claims = ClaimsRuntime {
+            claims: vec![claim(
+                "spec_0006",
+                "Operating temperature: -30 °C to +45 °C.",
+                ClaimStatus::Canonical,
+            )],
+            vectors: vec![],
+        };
+        let results = score_sentences(
+            &claims,
+            &["The operating temperature of the Frostline F4 is +45 °C.".to_string()],
+            true,
+        );
+        assert_eq!(results[0].verdict, "grounded");
+    }
+
     #[test]
     fn canonical_only_ignores_extracted_and_reviewed_claims() {
         let claims = ClaimsRuntime {

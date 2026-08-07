@@ -285,7 +285,14 @@ impl ClaimsRuntime {
         };
         let mut scored: Vec<(f32, &Claim)> = pool
             .into_iter()
-            .map(|c| (jaccard_similarity(text, &c.text), c))
+            .map(|c| {
+                let score = if numbers_conflict(text, &c.text) {
+                    0.0
+                } else {
+                    jaccard_similarity(text, &c.text)
+                };
+                (score, c)
+            })
             .collect();
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         scored
@@ -482,6 +489,11 @@ fn parse_clmv_section(data: &[u8]) -> Option<Vec<Vec<f32>>> {
 }
 
 fn jaccard_similarity(a: &str, b: &str) -> f32 {
+    // Numbers are kept regardless of length: the `len() > 3` filter exists to
+    // drop stopwords ("is", "the", "at"), but it was also silently dropping
+    // short numeric tokens ("30", "45", "500") — the exact values a spec
+    // sentence lives or dies on. A digit-only token counts even at length 1-2.
+    let keep = |w: &str| w.len() > 3 || (!w.is_empty() && w.chars().all(|c| c.is_ascii_digit()));
     let words_a: std::collections::HashSet<String> = a
         .split_whitespace()
         .map(|w| {
@@ -489,7 +501,7 @@ fn jaccard_similarity(a: &str, b: &str) -> f32 {
                 .trim_matches(|c: char| !c.is_alphanumeric())
                 .to_string()
         })
-        .filter(|w| w.len() > 3)
+        .filter(|w| keep(w))
         .collect();
     let words_b: std::collections::HashSet<String> = b
         .split_whitespace()
@@ -498,7 +510,7 @@ fn jaccard_similarity(a: &str, b: &str) -> f32 {
                 .trim_matches(|c: char| !c.is_alphanumeric())
                 .to_string()
         })
-        .filter(|w| w.len() > 3)
+        .filter(|w| keep(w))
         .collect();
     if words_a.is_empty() || words_b.is_empty() {
         return 0.0;
@@ -506,6 +518,52 @@ fn jaccard_similarity(a: &str, b: &str) -> f32 {
     let intersection = words_a.intersection(&words_b).count();
     let union = words_a.union(&words_b).count();
     intersection as f32 / union as f32
+}
+
+/// Numeric *words* in `text` — whitespace-separated tokens that, once outer
+/// punctuation is trimmed, are entirely digits/decimal point (plus an
+/// optional sign): "-30", "+45", "0.9", "180". Deliberately word-level, not
+/// a raw digit scan: "F4" or "SEV-1" contain digits but aren't numbers being
+/// asserted, and must not be treated as one (that produced false conflicts
+/// on "...Frostline F4 is +45 °C" against a claim that never repeats "F4").
+fn numeric_tokens(text: &str) -> std::collections::HashSet<String> {
+    text.split_whitespace()
+        .filter_map(|w| {
+            let trimmed = w.trim_matches(|c: char| !c.is_alphanumeric() && c != '.');
+            let negative = trimmed.starts_with('-');
+            let core = trimmed.trim_start_matches(['-', '+']);
+            if !core.is_empty() && core.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                Some(if negative {
+                    format!("-{core}")
+                } else {
+                    core.to_string()
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// True when `sentence` states a number that never appears in `claim` — e.g.
+/// a sentence claiming "+500 °C" against a claim of "-30 °C to +45 °C". Plain
+/// word overlap misses this: the surrounding words ("operating", "temperature",
+/// "Frostline") still match, so a fabricated number alone doesn't tank the
+/// score. A sentence with no numbers at all can't conflict.
+fn numbers_conflict(sentence: &str, claim: &str) -> bool {
+    let sentence_nums = numeric_tokens(sentence);
+    if sentence_nums.is_empty() {
+        return false;
+    }
+    !sentence_nums.is_subset(&numeric_tokens(claim))
+}
+
+/// True when `claim` grounds `sentence`: word overlap clears `min_score` and
+/// no number in `sentence` is absent from `claim`. Used both for the ranked
+/// `verify` search (via `find_relevant`) and the per-citation check in
+/// strict-render, so a fabricated number can't sneak past either path.
+pub fn claim_grounds_sentence(sentence: &str, claim: &str, min_score: f32) -> bool {
+    jaccard_similarity(sentence, claim) >= min_score && !numbers_conflict(sentence, claim)
 }
 
 // ─── Graph routing (THKG + LINK) ─────────────────────────────────────────────
