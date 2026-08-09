@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] — 2026-08-09
+
+### Security fixes
+
+- **`verify` / `strict-render`: reject a claim whose numbers don't match the sentence.** Word-overlap matching alone let a fabricated number through — a sentence claiming "+500 °C" used to score `grounded`/`coverage=1.0` against a claim stating "-30 °C to +45 °C", because the surrounding words outweighed the wrong number, and short numeric tokens were being filtered out of the overlap entirely. `strict-render` used to only check that a cited `[claim_id]` existed and was canonical, never that the claim actually supported the specific sentence it was pasted onto — it now runs a real per-citation check, in both the HTTP serve path and `aipk run`.
+- **`claims promote-all` / `--auto-promote`: hold back a claim whose span isn't in the source document.** `--auto-promote` skipped human review entirely, so extraction hallucinating a claim with no basis in the document went straight to `canonical` with no check at all. `promote_all` now checks each verbatim-mode claim's span against its source document before promoting, and holds back anything that doesn't match — left as `extracted`, still requiring an explicit `aipk claims promote <id>` or `reject <id>`.
+
+### 158 unit tests, 0 warnings
+
 ## [0.2.0] — 2026-07-02
 
 ### Datasets
