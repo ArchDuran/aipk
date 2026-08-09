@@ -926,11 +926,11 @@ impl IdtyRuntime {
 /// what a "trust layer" actually needs for regulated use, but it's a
 /// deliberate opt-in since it can withhold an otherwise-useful answer.
 ///
-/// This is EXPERIMENTAL: it gates on a single coverage/fully_grounded
+/// This is EXPERIMENTAL: it gates on a single coverage/fully_lexically_supported
 /// signal, not a full grounding contract (claim freshness, semantic
 /// entailment, contradiction detection are not checked here). Don't market
-/// `block` as "hallucinations eliminated" — it's "ungrounded sentences
-/// withheld," which is narrower and honest.
+/// `block` as "hallucinations eliminated" — it's "lexically unsupported
+/// sentences withheld," which is narrower and honest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum EnforceMode {
     /// Report groundedness as metadata only; always return the answer. Default.

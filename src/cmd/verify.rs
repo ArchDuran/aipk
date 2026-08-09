@@ -41,10 +41,13 @@ pub fn run(
     let canonical_only = !include_unreviewed;
     let results = score_sentences(&claims, &sentences, canonical_only);
 
-    let grounded = results.iter().filter(|r| r.verdict == "grounded").count();
+    let supported = results
+        .iter()
+        .filter(|r| r.verdict == "lexically_supported")
+        .count();
     let total = results.len();
     let coverage = if total > 0 {
-        grounded as f32 / total as f32
+        supported as f32 / total as f32
     } else {
         0.0
     };
@@ -58,6 +61,11 @@ pub fn run(
         let out = json!({
             "package": pkg.name,
             "canonical_only": canonical_only,
+            // Word-overlap + numeric-mismatch matching, not semantic entailment:
+            // a citation that resolves and shares enough words/numbers with the
+            // sentence counts as "lexically_supported", which is a narrower and
+            // more honest claim than "true". See the EXPERIMENTAL note in README's strict-render section.
+            "method": "lexical",
             "sentences": results.iter().map(|r| json!({
                 "text": r.text,
                 "verdict": r.verdict,
@@ -69,8 +77,8 @@ pub fn run(
             })).collect::<Vec<_>>(),
             "summary": {
                 "total": total,
-                "grounded": grounded,
-                "unsupported": total - grounded,
+                "lexically_supported": supported,
+                "unsupported": total - supported,
                 "coverage": coverage,
                 "unsupported_sentences": unsupported_sentences,
             }
@@ -83,21 +91,24 @@ pub fn run(
             claims.claims.len(),
             claims.canonical_count()
         );
+        println!(
+            "Method: lexical (word-overlap + numeric-mismatch check, not semantic entailment)"
+        );
         println!("Required coverage: {:.0}%", min_coverage * 100.0);
         if !canonical_only {
             println!("⚠  --include-unreviewed: matching against unreviewed claims too.");
         }
         println!();
         for (i, r) in results.iter().enumerate() {
-            let icon = if r.verdict == "grounded" {
+            let icon = if r.verdict == "lexically_supported" {
                 "✓"
             } else {
                 "✗"
             };
             println!("{}  Sentence {}: \"{}\"", icon, i + 1, r.text);
-            if r.verdict == "grounded" {
+            if r.verdict == "lexically_supported" {
                 println!(
-                    "   GROUNDED → [{}] \"{}\"  (score: {:.2})",
+                    "   LEXICALLY SUPPORTED → [{}] \"{}\"  (score: {:.2})",
                     r.claim_id.as_deref().unwrap_or("?"),
                     r.claim_text.as_deref().unwrap_or(""),
                     r.score
@@ -118,8 +129,8 @@ pub fn run(
         let bar =
             "█".repeat((coverage * 20.0) as usize) + &"░".repeat(20 - (coverage * 20.0) as usize);
         println!(
-            "Coverage: {}/{} sentences grounded  [{}] {:.0}%",
-            grounded,
+            "Coverage: {}/{} sentences lexically supported  [{}] {:.0}%",
+            supported,
             total,
             bar,
             coverage * 100.0
@@ -128,7 +139,10 @@ pub fn run(
         if coverage < 0.5 {
             println!("\n⚠  Low coverage — answer may contain unsupported claims.");
         } else if coverage == 1.0 {
-            println!("\n✓  All sentences grounded — answer is fully auditable.");
+            println!(
+                "\n✓  All sentences lexically supported — every citation resolves and \
+                 matches its claim's words and numbers. This is not a semantic truth check."
+            );
         }
     }
 
@@ -139,10 +153,10 @@ pub fn run(
     Ok(())
 }
 
-/// Matches each sentence against `claims` and scores it grounded/unsupported.
+/// Matches each sentence against `claims` and scores it lexically_supported/unsupported.
 /// `canonical_only` restricts matching to `ClaimStatus::Canonical` claims — with it
-/// off, `extracted`/`reviewed` (unreviewed) claims can ground a sentence too. Deprecated
-/// claims never ground a sentence, regardless of `canonical_only` — `ClaimsRuntime::load`
+/// off, `extracted`/`reviewed` (unreviewed) claims can support a sentence too. Deprecated
+/// claims never do, regardless of `canonical_only` — `ClaimsRuntime::load`
 /// already drops them, but we don't rely on that alone here.
 fn score_sentences(
     claims: &ClaimsRuntime,
@@ -163,7 +177,7 @@ fn score_sentences(
         let result = match relevant.first() {
             Some((score, claim)) if *score >= 0.2 => SentenceResult {
                 text: sentence.to_string(),
-                verdict: "grounded".to_string(),
+                verdict: "lexically_supported".to_string(),
                 claim_id: Some(claim.id.clone()),
                 claim_text: Some(claim.text.clone()),
                 source: if claim.source.is_empty() {
@@ -309,7 +323,7 @@ mod tests {
             &["The operating temperature of the Frostline F4 is +45 °C.".to_string()],
             true,
         );
-        assert_eq!(results[0].verdict, "grounded");
+        assert_eq!(results[0].verdict, "lexically_supported");
     }
 
     #[test]
@@ -348,7 +362,7 @@ mod tests {
         let sentences = vec!["Data must be retained for no longer than five years.".to_string()];
 
         let results = score_sentences(&claims, &sentences, true);
-        assert_eq!(results[0].verdict, "grounded");
+        assert_eq!(results[0].verdict, "lexically_supported");
         assert_eq!(results[0].claim_id.as_deref(), Some("c1"));
     }
 
@@ -388,7 +402,7 @@ mod tests {
         let sentences = vec!["Data must be retained for no longer than five years.".to_string()];
 
         let results = score_sentences(&claims, &sentences, false);
-        assert_eq!(results[0].verdict, "grounded");
+        assert_eq!(results[0].verdict, "lexically_supported");
         assert_eq!(results[0].claim_id.as_deref(), Some("c1"));
     }
 }

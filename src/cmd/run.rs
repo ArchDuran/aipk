@@ -230,29 +230,30 @@ pub async fn run(
         let uncited = crate::cmd::serve::collect_unsupported_sentences(content, &claims);
         let total = crate::cmd::serve::count_sentences(content).max(1);
         let coverage = (total - uncited.len().min(total)) as f32 / total as f32;
-        let fully_grounded = invalid.is_empty() && uncited.is_empty();
+        let fully_lexically_supported = invalid.is_empty() && uncited.is_empty();
 
         eprintln!(
-            "_aipk: canonical_used={} invalid_ids={:?} coverage={:.2} uncited_sentences={} fully_grounded={}",
+            "_aipk: method=lexical canonical_used={} invalid_ids={:?} coverage={:.2} \
+             uncited_sentences={} fully_lexically_supported={}",
             canonical_used.len(),
             invalid,
             coverage,
             uncited.len(),
-            fully_grounded
+            fully_lexically_supported
         );
 
         use crate::runtime::EnforceMode;
         match enforce {
-            EnforceMode::Block if !fully_grounded => {
+            EnforceMode::Block if !fully_lexically_supported => {
                 println!(
-                    "This answer could not be fully grounded in canonical claims and was \
-                     withheld (--enforce block). See the _aipk report above for detail."
+                    "This answer's citations could not be fully lexically matched to canonical \
+                     claims and was withheld (--enforce block). See the _aipk report above for detail."
                 );
                 anyhow::bail!("strict-render: ungrounded answer blocked (--enforce block)");
             }
-            EnforceMode::Warn if !fully_grounded => {
+            EnforceMode::Warn if !fully_lexically_supported => {
                 eprintln!(
-                    "_aipk: flagged — answer returned but not fully grounded (--enforce warn)"
+                    "_aipk: flagged — answer returned but not fully lexically supported (--enforce warn)"
                 );
                 println!("{content}");
             }

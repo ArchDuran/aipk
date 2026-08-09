@@ -191,10 +191,11 @@ aipk verify legal-assistant.aipk \
 ```json
 {
   "package": "legal-assistant",
+  "method": "lexical",
   "sentences": [
     {
       "text": "Data retention must not exceed 5 years under Article 17.",
-      "verdict": "grounded",
+      "verdict": "lexically_supported",
       "claim_id": "regs_0012",
       "claim_text": "Article 17 limits data retention to 5 years.",
       "source": "regulations.pdf",
@@ -204,15 +205,17 @@ aipk verify legal-assistant.aipk \
   ],
   "summary": {
     "total": 1,
-    "grounded": 1,
+    "lexically_supported": 1,
     "coverage": 1.0,
     "unsupported_sentences": []
   }
 }
 ```
 
+`"verdict": "lexically_supported"` means a citation resolved to a canonical claim whose words and numbers overlap the sentence enough to clear the threshold — not that the sentence has been checked for truth. `"method": "lexical"` names the check so this stays honest as stronger methods (a local NLI model, an LLM judge) become available as alternatives: negation ("must **not** exceed") and numbers spelled out as words currently still pass this check even when they contradict the claim — see the EXPERIMENTAL note below.
+
 **Exit codes** (CI/pipeline ready):
-- `0` — all sentences grounded
+- `0` — all sentences lexically supported
 - `1` — unsupported sentences found
 - `2` — package or runtime error
 
@@ -230,29 +233,30 @@ aipk serve legal-assistant.aipk --strict-verify --model llama3.2
 aipk serve legal-assistant.aipk --strict-render --model llama3.2
 ```
 
-**strict-render** always prompts the model to cite claims and reports grounding as `_aipk` metadata on every response. What happens to an *ungrounded* response depends on `--enforce`:
+**strict-render** always prompts the model to cite claims and reports lexical support as `_aipk` metadata on every response. What happens to a response that isn't fully lexically supported depends on `--enforce`:
 
-- `--enforce observe` (default) — report only, same as before this flag existed. The caller decides what to do with `fully_grounded: false`.
+- `--enforce observe` (default) — report only, same as before this flag existed. The caller decides what to do with `fully_lexically_supported: false`.
 - `--enforce warn` — return the answer, but set `_aipk.flagged: true` so it's easy to surface a banner without inspecting `coverage` yourself.
-- `--enforce block` — withhold the ungrounded answer entirely; `content` becomes a refusal message instead. `aipk run --strict-render --enforce block` also exits non-zero, so scripts/CI can detect a block.
+- `--enforce block` — withhold the answer entirely; `content` becomes a refusal message instead. `aipk run --strict-render --enforce block` also exits non-zero, so scripts/CI can detect a block.
 
 ```json
 {
   "_aipk": {
     "mode": "strict-render",
+    "method": "lexical",
     "coverage": 0.87,
     "canonical_claims_used": 4,
     "uncited_sentences": 1,
     "invalid_claim_ids": [],
     "unsupported_sentences": ["This sentence had no citation."],
-    "fully_grounded": false,
+    "fully_lexically_supported": false,
     "verdict": "warn",
     "enforce": "warn"
   }
 }
 ```
 
-> **EXPERIMENTAL, read narrowly:** `--enforce block` gates on the same single `fully_grounded` signal shown above — citation validity + sentence coverage. It does not check claim freshness, semantic entailment (does the cited claim actually support the sentence?), or contradictions between canonical claims. Treat it as "ungrounded sentences withheld," not "hallucinations eliminated."
+> **EXPERIMENTAL, read narrowly:** `--enforce block` gates on the same single `fully_lexically_supported` signal shown above — citation validity + word/number overlap. It does not check claim freshness, semantic entailment (does the cited claim actually support the sentence?), or contradictions between canonical claims. A negated sentence ("X is **not** true") or a number spelled out as words ("five hundred" instead of "500") can still score as fully lexically supported against a claim that says the opposite — this is a known, open gap, not a rare edge case. Treat `block` as "lexically unsupported sentences withheld," not "hallucinations eliminated."
 
 ---
 

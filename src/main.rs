@@ -431,12 +431,12 @@ enum Commands {
         package: PathBuf,
         /// Answer text to verify
         answer: String,
-        /// Minimum grounded sentence coverage required for exit code 0
+        /// Minimum lexically-supported sentence coverage required for exit code 0
         #[arg(long, default_value_t = 1.0)]
         min_coverage: f32,
         /// Also match against unreviewed claims (status extracted/reviewed), not just
-        /// canonical ones. Off by default: "grounded" should mean a human signed off
-        /// on the fact, not merely that the model extracted it.
+        /// canonical ones. Off by default: "lexically_supported" should mean a human
+        /// signed off on the fact, not merely that the model extracted it.
         #[arg(long)]
         include_unreviewed: bool,
         /// Output as JSON (for tooling / CI)

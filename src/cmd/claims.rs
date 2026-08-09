@@ -336,7 +336,8 @@ pub fn promote_all(dir: &Path, from_status: &str, reviewer: Option<&str>) -> Res
 
     let at = now_rfc3339();
     let mut promoted = 0usize;
-    let mut held_back: Vec<String> = Vec::new();
+    let mut held_back_span: Vec<String> = Vec::new();
+    let mut held_back_digest: Vec<String> = Vec::new();
 
     for claim in claims.iter_mut() {
         let id = claim["id"].as_str().unwrap_or("").to_string();
@@ -345,25 +346,28 @@ pub fn promote_all(dir: &Path, from_status: &str, reviewer: Option<&str>) -> Res
         }
 
         // Digest-mode claims are deliberate paraphrases, not verbatim quotes —
-        // there's no source substring to check them against. Verbatim-mode
-        // (and legacy claims with no "mode" field) get the span-grounding
-        // check: --auto-promote exists to skip human review, so this is the
-        // one automated backstop against extraction hallucinating a claim
-        // with no basis in the document at all.
-        let is_verbatim = claim["mode"].as_str().unwrap_or("verbatim") == "verbatim";
-        if is_verbatim {
-            let span = claim["span"].as_str().unwrap_or("");
-            let source_title = claim["source"].as_str().unwrap_or("");
-            let grounded = source_paths.get(source_title).is_some_and(|path| {
-                let text = source_cache
-                    .entry(path.clone())
-                    .or_insert_with(|| fs::read_to_string(path).unwrap_or_default());
-                span_is_grounded(span, text)
-            });
-            if !grounded {
-                held_back.push(id);
-                continue;
-            }
+        // there's no source substring to check them against, so they can't be
+        // auto-verified at all and always need a human to promote them by
+        // hand. Verbatim-mode (and legacy claims with no "mode" field) get
+        // the span-grounding check instead: --auto-promote exists to skip
+        // human review, so this is the one automated backstop against
+        // extraction hallucinating a claim with no basis in the document.
+        let mode = claim["mode"].as_str().unwrap_or("verbatim");
+        if mode == "digest" {
+            held_back_digest.push(id);
+            continue;
+        }
+        let span = claim["span"].as_str().unwrap_or("");
+        let source_title = claim["source"].as_str().unwrap_or("");
+        let grounded = source_paths.get(source_title).is_some_and(|path| {
+            let text = source_cache
+                .entry(path.clone())
+                .or_insert_with(|| fs::read_to_string(path).unwrap_or_default());
+            span_is_grounded(span, text)
+        });
+        if !grounded {
+            held_back_span.push(id);
+            continue;
         }
 
         claim["status"] = json!("canonical");
@@ -389,14 +393,25 @@ pub fn promote_all(dir: &Path, from_status: &str, reviewer: Option<&str>) -> Res
         "✓ Promoted {} claims: {} → canonical",
         promoted, from_status
     );
-    if !held_back.is_empty() {
+    if !held_back_span.is_empty() {
         println!(
             "⚠ Held back {} claim(s) whose span doesn't appear in its source document \
              (still '{}' — needs human review via 'aipk claims promote <id>' or 'aipk claims reject <id>'):",
-            held_back.len(),
+            held_back_span.len(),
             from_status
         );
-        for id in &held_back {
+        for id in &held_back_span {
+            println!("    {id}");
+        }
+    }
+    if !held_back_digest.is_empty() {
+        println!(
+            "⚠ Held back {} digest-mode claim(s) — paraphrases can't be auto-verified \
+             (still '{}' — needs human review via 'aipk claims promote <id>' or 'aipk claims reject <id>'):",
+            held_back_digest.len(),
+            from_status
+        );
+        for id in &held_back_digest {
             println!("    {id}");
         }
     }
@@ -679,10 +694,11 @@ mod tests {
     }
 
     #[test]
-    fn promote_all_skips_the_span_check_for_digest_mode() {
+    fn promote_all_never_auto_promotes_digest_mode() {
         // Digest mode is a deliberate paraphrase, not a verbatim quote — there's
-        // no substring to check it against, so it must still promote normally.
-        let dir = scratch_dir("digest_skips_check");
+        // no substring to check it against, so --auto-promote can't verify it
+        // at all and must always hold it back for a human.
+        let dir = scratch_dir("digest_never_promotes");
         fs::write(dir.join("doc.md"), "Some unrelated source text.\n").unwrap();
         fs::write(
             dir.join("sources.jsonl"),
@@ -712,7 +728,7 @@ mod tests {
         promote_all(&dir, "extracted", None).unwrap();
 
         let claims = load_claims(&dir).unwrap();
-        assert_eq!(claims[0]["status"], "canonical");
+        assert_eq!(claims[0]["status"], "extracted");
 
         fs::remove_dir_all(&dir).ok();
     }

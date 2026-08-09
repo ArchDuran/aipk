@@ -906,20 +906,24 @@ async fn llm_render_loop_json(
     let supported = total_sentences.saturating_sub(unsupported_sentences.len());
     let coverage = supported as f32 / total_sentences as f32;
 
-    let fully_grounded = invalid_claim_ids.is_empty() && unsupported_sentences.is_empty();
+    let fully_lexically_supported =
+        invalid_claim_ids.is_empty() && unsupported_sentences.is_empty();
 
     let mut out = result.clone();
     out["_aipk"] = json!({
         "mode": "strict-render",
+        // Word-overlap + numeric-mismatch matching, not semantic entailment —
+        // see the EXPERIMENTAL note in README's strict-render section.
+        "method": "lexical",
         "coverage": (coverage * 100.0).round() / 100.0,
         "canonical_claims_used": canonical_claims_used.len(),
         "canonical_claim_ids": canonical_claims_used,
         "uncited_sentences": unsupported_sentences.len(),
         "invalid_claim_ids": invalid_claim_ids,
         "unsupported_sentences": unsupported_sentences,
-        "fully_grounded": fully_grounded,
+        "fully_lexically_supported": fully_lexically_supported,
     });
-    apply_enforce(s.enforce, fully_grounded, out)
+    apply_enforce(s.enforce, fully_lexically_supported, out)
 }
 
 /// Applies `--enforce` to an already-scored strict-render response. Pure and
@@ -929,20 +933,23 @@ async fn llm_render_loop_json(
 ///
 /// EXPERIMENTAL, deliberately narrow: `verdict` reflects what this gate did
 /// (allow/warn/block), not a full grounding contract — it gates on the same
-/// single coverage/fully_grounded signal `fully_grounded` already exposed,
-/// it does not check claim freshness, semantic entailment, or contradictions.
-/// Don't read `verdict: "block"` as "no hallucination is possible here."
+/// single coverage/fully_lexically_supported signal already exposed, using
+/// word-overlap + numeric-mismatch matching, not semantic entailment: it does
+/// not check claim freshness or contradictions, and a negated or reworded
+/// false statement can still score as lexically supported (see README's
+/// EXPERIMENTAL note in README's strict-render section). Don't read `verdict: "block"` as "no hallucination
+/// is possible here."
 pub(crate) fn apply_enforce(
     mode: crate::runtime::EnforceMode,
-    fully_grounded: bool,
+    fully_lexically_supported: bool,
     mut out: Value,
 ) -> Value {
     use crate::runtime::EnforceMode;
 
     let verdict = match mode {
         EnforceMode::Observe => "allow",
-        EnforceMode::Warn if !fully_grounded => "warn",
-        EnforceMode::Block if !fully_grounded => "block",
+        EnforceMode::Warn if !fully_lexically_supported => "warn",
+        EnforceMode::Block if !fully_lexically_supported => "block",
         _ => "allow",
     };
     out["_aipk"]["verdict"] = json!(verdict);
@@ -955,8 +962,9 @@ pub(crate) fn apply_enforce(
     match verdict {
         "block" => {
             out["choices"][0]["message"]["content"] = json!(
-                "This answer could not be fully grounded in canonical claims and was withheld \
-                 (--enforce block). See the _aipk field for coverage and uncited-sentence detail."
+                "This answer's citations could not be fully lexically matched to canonical \
+                 claims and was withheld (--enforce block). See the _aipk field for coverage \
+                 and uncited-sentence detail."
             );
             out["_aipk"]["mode"] = json!("strict-render-blocked");
         }
@@ -1155,7 +1163,7 @@ mod tests {
     fn sample_out() -> Value {
         json!({
             "choices": [{"index": 0, "message": {"role": "assistant", "content": "Original answer."}}],
-            "_aipk": {"fully_grounded": false}
+            "_aipk": {"fully_lexically_supported": false}
         })
     }
 
