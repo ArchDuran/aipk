@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2] — 2026-08-10
+
+### Security & honesty fixes
+
+- **`claims promote-all` / `--auto-promote`: close the digest-mode bypass.** The span-grounding check added in 0.2.1 only applied to verbatim-mode claims — digest mode (deliberate paraphrases) had no substring to check against, so it skipped verification entirely and still went straight to `canonical`. Digest-mode claims are now always held back as `extracted`, same as a failed span check, requiring an explicit `aipk claims promote <id>` or `reject <id>`.
+- **Renamed `verdict: "grounded"` → `"lexically_supported"`, `fully_grounded` → `fully_lexically_supported`, across `verify`, `strict-render`, and `aipk run`.** The old naming implied more than word-overlap + numeric-mismatch matching actually checks. A negated sentence ("X is **not** true") or a number spelled out as words ("five hundred" instead of "500") still passes this check today — confirmed reproducible, documented as a known open gap in README rather than left implicit.
+- Added a `"method": "lexical"` field to `verify` and `strict-render` JSON output — names the current check explicitly so a future pluggable verifier layer (local NLI, LLM judge, human approval) can report a different `method` without another silent terminology drift.
+
+### 158 unit tests, 0 warnings
+
 ## [0.2.1] — 2026-08-09
 
 ### Security fixes
